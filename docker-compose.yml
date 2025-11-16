@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${DB_USER:-mcp}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-MedT@iner2024!SecureDB}
     ports:
-      - "5432:5432"
+      - "5434:5432"  # Use 5434 locally to avoid conflict with DevMCP (5433)
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,16 +23,16 @@ services:
     image: redis:7-alpine
     container_name: medtainer-redis
     ports:
-      - "6380:6379" # Map host port 6380 to container port 6379
+      - "6381:6379"  # Use 6381 locally to avoid conflict with DevMCP (6380)
     volumes:
       - redis_data:/data
     restart: unless-stopped
 
   mcp:
     build: .
-    container_name: medtainer-mcp
+    container_name: medtainer-mcp-local
     ports:
-      - "8000:8000"
+      - "8002:8000"  # Use 8002 locally for testing
     env_file:
       - .env
     environment:
