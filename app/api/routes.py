@@ -240,6 +240,44 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
 @router.get("/sse")
 async def sse_endpoint(request: Request):
+    """
+    MCP Server-Sent Events endpoint with dual authentication:
+    - Option 1: OAuth Bearer token (for Claude Desktop)
+    - Option 2: API Key via X-API-Key header (for direct access)
+    """
+    # Check for authentication
+    auth_header = request.headers.get("authorization", "")
+    api_key_header = request.headers.get("x-api-key", "")
+
+    authenticated = False
+    auth_method = None
+
+    # Try OAuth token first
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        token_data_str = redis_client.get(f"access_token:{token}")
+        if token_data_str:
+            authenticated = True
+            auth_method = "oauth"
+            logger.info(f"SSE connection authenticated via OAuth token: {token[:8]}...")
+
+    # Fall back to API key
+    if not authenticated and api_key_header:
+        from app.core.config import settings
+        if settings.mcp_api_key and api_key_header == settings.mcp_api_key:
+            authenticated = True
+            auth_method = "api_key"
+            logger.info(f"SSE connection authenticated via API key: {api_key_header[:8]}...")
+
+    # Reject if no valid auth
+    if not authenticated:
+        logger.warning("SSE connection rejected: No valid authentication")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Provide either OAuth Bearer token or X-API-Key header"
+        )
+
+    logger.info(f"SSE connection established (auth: {auth_method})")
     response_queue = asyncio.Queue()
 
     async def event_generator():
