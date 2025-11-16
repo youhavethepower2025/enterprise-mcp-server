@@ -68,5 +68,12 @@ class Settings(BaseSettings):
     # DigitalOcean
     digitalocean_api_token: Optional[str] = Field(default=None, repr=False)
 
+    # MCP Server Authentication
+    mcp_api_key: Optional[str] = Field(
+        default=None,
+        repr=False,
+        description="API key for authenticating MCP tool execution requests"
+    )
+
 
 settings = Settings()
