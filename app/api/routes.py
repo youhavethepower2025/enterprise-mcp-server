@@ -20,7 +20,7 @@ redis_client = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_
 # OAuth credentials for Claude Desktop
 CLIENT_ID = "claude-desktop"
 CLIENT_SECRET = os.getenv("OAUTH_CLIENT_SECRET", "medtainer-mcp-secret-2024")  # Load from env
-REDIRECT_URI = "https://claude.ai/oauth/callback"
+REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"  # Actual Claude Desktop redirect URI
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
