@@ -8,6 +8,8 @@
 
 **OAuth Client Secret**: `nJHBiE_YwKXFis48s1LZKOA4VJASpn1A5O8rcVUnVA8`
 
+**Redirect URI**: `https://claude.ai/api/mcp/auth_callback`
+
 ---
 
 ## Configuration Steps
