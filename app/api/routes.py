@@ -17,8 +17,9 @@ redis_client = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_
 
 # --- Minimal, From-Scratch OAuth 2.1 Implementation ---
 
-# This is the client ID that Claude Desktop will use.
+# OAuth credentials for Claude Desktop
 CLIENT_ID = "claude-desktop"
+CLIENT_SECRET = os.getenv("OAUTH_CLIENT_SECRET", "medtainer-mcp-secret-2024")  # Load from env
 REDIRECT_URI = "https://claude.ai/oauth/callback"
 
 logger = logging.getLogger(__name__)
