@@ -25,6 +25,38 @@ REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"  # Actual Claude Deskto
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# --- OAuth Discovery Endpoints (RFC 9728) ---
+
+@router.get("/.well-known/oauth-authorization-server")
+async def oauth_authorization_server_metadata():
+    """
+    RFC 8414 - OAuth 2.0 Authorization Server Metadata
+    Tells clients where to find OAuth endpoints
+    """
+    return {
+        "issuer": "https://medtainer.aijesusbro.com",
+        "authorization_endpoint": "https://medtainer.aijesusbro.com/authorize",
+        "token_endpoint": "https://medtainer.aijesusbro.com/token",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],  # PKCE doesn't require client_secret
+    }
+
+@router.get("/.well-known/oauth-protected-resource")
+async def oauth_protected_resource_metadata():
+    """
+    RFC 9728 - OAuth 2.0 Protected Resource Metadata
+    Tells clients where to find the MCP endpoint
+    """
+    return {
+        "resource": "https://medtainer.aijesusbro.com",
+        "authorization_servers": ["https://medtainer.aijesusbro.com"],
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": "https://medtainer.aijesusbro.com",
+        "mcp_endpoint": "https://medtainer.aijesusbro.com/mcp",  # Tell Claude where MCP is!
+    }
+
 @router.get("/authorize")
 async def oauth_authorize(
     request: Request,
