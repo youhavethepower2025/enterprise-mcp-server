@@ -32,7 +32,7 @@ services:
     build: .
     container_name: medtainer-mcp-local
     ports:
-      - "8002:8000"  # Use 8002 locally for testing
+      - "8000:8000"  # Production uses 8000 (local dev would use 8002)
     env_file:
       - .env
     environment:
