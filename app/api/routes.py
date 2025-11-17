@@ -66,16 +66,20 @@ async def oauth_token(
     grant_type: str = Form(...),
     code: str = Form(...),
     redirect_uri: str = Form(...),
-    client_id: str = Form(...)
+    client_id: str = Form(...),
+    client_secret: str = Form(...)
 ):
     """
     This is the /token endpoint.
     It exchanges an authorization code for an access token.
+    Requires client_secret for secure OAuth 2.1 flow.
     """
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Invalid grant_type")
     if client_id != CLIENT_ID:
         raise HTTPException(status_code=400, detail="Invalid client_id")
+    if client_secret != CLIENT_SECRET:
+        raise HTTPException(status_code=400, detail="Invalid client_secret")
     if redirect_uri != REDIRECT_URI: # Validate redirect_uri again
         raise HTTPException(status_code=400, detail="Invalid redirect_uri")
 
