@@ -281,17 +281,24 @@ async def sse_endpoint(request: Request):
     auth_header = request.headers.get("authorization", "")
     api_key_header = request.headers.get("x-api-key", "")
 
+    # Debug logging
+    logger.info(f"SSE connection attempt - Authorization header: {auth_header[:50] if auth_header else 'None'}")
+    logger.info(f"SSE connection attempt - X-API-Key header: {api_key_header[:20] if api_key_header else 'None'}")
+
     authenticated = False
     auth_method = None
 
     # Try OAuth token first
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]  # Remove "Bearer " prefix
+        logger.debug(f"Checking OAuth token in Redis: access_token:{token[:16]}...")
         token_data_str = redis_client.get(f"access_token:{token}")
         if token_data_str:
             authenticated = True
             auth_method = "oauth"
             logger.info(f"SSE connection authenticated via OAuth token: {token[:8]}...")
+        else:
+            logger.warning(f"OAuth token not found in Redis: {token[:16]}...")
 
     # Fall back to API key
     if not authenticated and api_key_header:
