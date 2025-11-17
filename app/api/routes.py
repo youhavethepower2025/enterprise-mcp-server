@@ -26,12 +26,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/authorize")
-async def oauth_authorize(request: Request, client_id: str, redirect_uri: str, scope: str, state: str, response_type: str):
+async def oauth_authorize(
+    request: Request,
+    client_id: str,
+    redirect_uri: str,
+    scope: str,
+    state: str,
+    response_type: str,
+    code_challenge: str = None,  # PKCE support
+    code_challenge_method: str = None  # PKCE support
+):
     """
-    This is the /authorize endpoint.
-    It checks the client_id and redirect_uri, and if they are valid,
-    it generates an authorization code and redirects the user back to the
-    redirect_uri with the code and state.
+    OAuth 2.1 authorization endpoint with PKCE support.
+    Validates client and generates authorization code.
     """
     if client_id != CLIENT_ID:
         raise HTTPException(status_code=400, detail="Invalid client_id")
@@ -40,20 +47,21 @@ async def oauth_authorize(request: Request, client_id: str, redirect_uri: str, s
     if response_type != "code":
         raise HTTPException(status_code=400, detail="Invalid response_type")
 
-    # Generate a simple authorization code
+    # Generate authorization code
     auth_code = os.urandom(16).hex()
-    
-    # Store the code in Redis with an expiration (e.g., 10 minutes)
-    # The value stored is a JSON string of the code's details
+
+    # Store code with PKCE challenge if provided
     code_data = {
         "client_id": client_id,
-        "redirect_uri": redirect_uri, # Store the redirect_uri for validation at /token
+        "redirect_uri": redirect_uri,
         "scope": scope,
-        "state": state
+        "state": state,
+        "code_challenge": code_challenge,  # Store for PKCE validation
+        "code_challenge_method": code_challenge_method
     }
-    redis_client.setex(f"auth_code:{auth_code}", 600, json.dumps(code_data)) # 600 seconds = 10 minutes
+    redis_client.setex(f"auth_code:{auth_code}", 600, json.dumps(code_data))
 
-    # Redirect back to the client with the code
+    # Redirect back with authorization code
     params = {
         "code": auth_code,
         "state": state
@@ -67,33 +75,52 @@ async def oauth_token(
     code: str = Form(...),
     redirect_uri: str = Form(...),
     client_id: str = Form(...),
-    client_secret: str = Form(...)
+    client_secret: str = Form(None),  # Optional for PKCE
+    code_verifier: str = Form(None)  # PKCE code verifier
 ):
     """
-    This is the /token endpoint.
-    It exchanges an authorization code for an access token.
-    Requires client_secret for secure OAuth 2.1 flow.
+    OAuth 2.1 token endpoint with PKCE support.
+    Exchanges authorization code for access token.
+    Supports both client_secret and PKCE flows.
     """
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Invalid grant_type")
     if client_id != CLIENT_ID:
         raise HTTPException(status_code=400, detail="Invalid client_id")
-    if client_secret != CLIENT_SECRET:
-        raise HTTPException(status_code=400, detail="Invalid client_secret")
-    if redirect_uri != REDIRECT_URI: # Validate redirect_uri again
+    if redirect_uri != REDIRECT_URI:
         raise HTTPException(status_code=400, detail="Invalid redirect_uri")
 
     # Retrieve and delete the authorization code from Redis
     code_json = redis_client.get(f"auth_code:{code}")
     if not code_json:
         raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
-    
+
     auth_code_data = json.loads(code_json)
     redis_client.delete(f"auth_code:{code}") # Code is single-use
 
-    # Validate client_id and redirect_uri from stored code data
+    # Validate client_id from stored code data
     if auth_code_data["client_id"] != client_id:
         raise HTTPException(status_code=400, detail="Mismatched client_id")
+
+    # PKCE validation (OAuth 2.1)
+    code_challenge = auth_code_data.get("code_challenge")
+    if code_challenge:
+        # PKCE flow - validate code_verifier
+        if not code_verifier:
+            raise HTTPException(status_code=400, detail="code_verifier required for PKCE")
+
+        # Verify code_verifier matches code_challenge
+        import hashlib
+        import base64
+        verifier_hash = hashlib.sha256(code_verifier.encode()).digest()
+        verifier_challenge = base64.urlsafe_b64encode(verifier_hash).decode().rstrip('=')
+
+        if verifier_challenge != code_challenge:
+            raise HTTPException(status_code=400, detail="Invalid code_verifier")
+    else:
+        # Traditional flow - validate client_secret
+        if not client_secret or client_secret != CLIENT_SECRET:
+            raise HTTPException(status_code=400, detail="Invalid client_secret")
     if auth_code_data["redirect_uri"] != redirect_uri:
         raise HTTPException(status_code=400, detail="Mismatched redirect_uri")
 
