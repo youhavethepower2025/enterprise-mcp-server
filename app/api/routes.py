@@ -270,8 +270,17 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
 # --- Main SSE Endpoint ---
 
-@router.get("/sse")
+@router.get("/mcp")  # MCP spec requires /mcp not /sse
+async def mcp_endpoint(request: Request):
+    """MCP HTTP+SSE endpoint - the official MCP SSE endpoint"""
+    return await sse_handler(request)
+
+@router.get("/sse")  # Keep for backward compatibility
 async def sse_endpoint(request: Request):
+    """Legacy SSE endpoint - redirects to /mcp"""
+    return await sse_handler(request)
+
+async def sse_handler(request: Request):
     """
     MCP Server-Sent Events endpoint with dual authentication:
     - Option 1: OAuth Bearer token (for Claude Desktop)
