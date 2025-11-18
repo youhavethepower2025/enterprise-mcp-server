@@ -362,32 +362,50 @@ async def sse_handler(request: Request):
 
     async def event_generator():
         read_task = asyncio.create_task(read_requests(request, response_queue))
-        
+
         init_notification = {
             "jsonrpc": "2.0",
             "method": "server/initialized",
             "params": {}
         }
-        yield json.dumps(init_notification) + '\n'
+        # SSE format: "data: {json}\n\n"
+        yield f"data: {json.dumps(init_notification)}\n\n"
         logger.info("Sent server/initialized notification.")
 
         try:
             while True:
-                response_data = await response_queue.get()
-                if response_data is None:
-                    break
-                
-                response_str = json.dumps(response_data) + '\n'
-                logger.debug(f"Sending response: {response_str.strip()}")
-                yield response_str
-                
+                try:
+                    # Wait for response with timeout for keepalive
+                    response_data = await asyncio.wait_for(response_queue.get(), timeout=30)
+                    if response_data is None:
+                        break
+
+                    # SSE format: "data: {json}\n\n"
+                    response_str = f"data: {json.dumps(response_data)}\n\n"
+                    logger.debug(f"Sending SSE response: {response_str.strip()}")
+                    yield response_str
+
+                except asyncio.TimeoutError:
+                    # Send keepalive comment every 30 seconds to prevent proxy timeout
+                    yield ": keepalive\n\n"
+                    logger.debug("Sent SSE keepalive")
+                    continue
+
         except asyncio.CancelledError:
             logger.info("Event generator cancelled.")
         finally:
             read_task.cancel()
             logger.info("SSE stream closed.")
 
-    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Connection": "keep-alive",
+        }
+    )
 
 @router.get("/health")
 def health_check() -> dict:
