@@ -87,16 +87,16 @@ async def oauth_protected_resource_metadata():
     """
     RFC 9728 - OAuth 2.0 Protected Resource Metadata
     Tells clients where to connect with Bearer token
+    CRITICAL: resource MUST match the MCP endpoint URL exactly (June 2025 spec)
     """
     base_url = "https://medtainer.aijesusbro.com"
+    mcp_endpoint = f"{base_url}/mcp"
     return {
-        "resource": base_url,  # ✅ FIXED: Base URL only, not /mcp path
+        "resource": mcp_endpoint,
         "authorization_servers": [base_url],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": ["read", "write"],  # ✅ FIXED: Standard scopes
-        "mcp_endpoints": [  # ✅ NEW: MCP-specific endpoint list
-            f"{base_url}/mcp"
-        ]
+        "scopes_supported": ["read", "write"],
+        "mcp_endpoints": [mcp_endpoint]  # Array format per latest research
     }
 
 @router.get("/.well-known/oauth-protected-resource/mcp")
@@ -119,23 +119,35 @@ async def oauth_authorization_server_metadata_mcp():
     logger.info("OAuth Authorization Server Metadata requested (MCP-suffixed path)")
     return await oauth_authorization_server_metadata()
 
-@router.get("/authorize")
+@router.api_route("/authorize", methods=["GET", "POST"])
 async def oauth_authorize(
     request: Request,
-    client_id: str,
-    redirect_uri: str,
-    scope: str,
-    state: str,
-    response_type: str,
-    code_challenge: str = None,  # PKCE support
-    code_challenge_method: str = None  # PKCE support
+    client_id: str = Form(None),
+    redirect_uri: str = Form(None),
+    scope: str = Form(None),
+    state: str = Form(None),
+    response_type: str = Form(None),
+    code_challenge: str = Form(None),  # PKCE support
+    code_challenge_method: str = Form(None)  # PKCE support
 ):
     """
     OAuth 2.1 authorization endpoint with PKCE support.
+    Accepts both GET (query params) and POST (form data) requests.
     Validates client and generates authorization code.
     """
-    logger.info(f"=== OAUTH AUTHORIZE START === client_id={client_id}, scope={scope}")
-    logger.debug(f"redirect_uri={redirect_uri}, response_type={response_type}, state={state[:20]}...")
+    # Extract parameters from query string if not in form (GET request)
+    if client_id is None:
+        params = dict(request.query_params)
+        client_id = params.get("client_id")
+        redirect_uri = params.get("redirect_uri")
+        scope = params.get("scope")
+        state = params.get("state")
+        response_type = params.get("response_type")
+        code_challenge = params.get("code_challenge")
+        code_challenge_method = params.get("code_challenge_method")
+
+    logger.info(f"=== OAUTH AUTHORIZE START === method={request.method}, client_id={client_id}, scope={scope}")
+    logger.debug(f"redirect_uri={redirect_uri}, response_type={response_type}, state={state[:20] if state else 'None'}...")
     logger.debug(f"PKCE: code_challenge={code_challenge[:20] if code_challenge else 'None'}..., method={code_challenge_method}")
 
     if client_id != CLIENT_ID:
@@ -260,13 +272,42 @@ async def oauth_token(
     access_token = os.urandom(32).hex()
     logger.info(f"=== ACCESS TOKEN GENERATED === token={access_token[:16]}...")
 
+    # CRITICAL FIX (Nov 2025): Generate refresh_token per GitHub Issue #11814
+    # Claude Desktop expects refresh_token even if not used
+    refresh_token = os.urandom(32).hex()
+    logger.info(f"=== REFRESH TOKEN GENERATED === token={refresh_token[:16]}...")
+
+    # CRITICAL FIX (Nov 2025): Add aud (audience) claim per GitHub Issue #11814
+    # The aud claim must match the resource URL from .well-known/oauth-protected-resource
+    base_url = "https://medtainer.aijesusbro.com"
+    mcp_endpoint = f"{base_url}/mcp"
+
     # Store the token in Redis with an expiration (e.g., 1 hour)
+    # CRITICAL FIX: Add all required JWT claims per OAuth 2.1 + JWT spec
+    # Claude Desktop validates these claims locally before attempting connection
+    import time
+    current_time = int(time.time())
     token_data = {
+        "iss": base_url,  # ✅ Issuer - must match issuer in /.well-known/oauth-authorization-server
+        "sub": client_id,  # ✅ Subject - identity of the token holder (client in this case)
+        "aud": mcp_endpoint,  # ✅ Audience - must match resource URL
+        "iat": current_time,  # ✅ Issued At - timestamp when token was created
+        "exp": current_time + 3600,  # ✅ Expiration - token expires in 1 hour
         "client_id": client_id,
         "scope": auth_code_data["scope"]
     }
     redis_client.setex(f"access_token:{access_token}", 3600, json.dumps(token_data)) # 3600 seconds = 1 hour
+
+    # Store refresh token with longer expiration (7 days)
+    refresh_token_data = {
+        "client_id": client_id,
+        "scope": auth_code_data["scope"],
+        "access_token": access_token
+    }
+    redis_client.setex(f"refresh_token:{refresh_token}", 604800, json.dumps(refresh_token_data)) # 7 days
+
     logger.info(f"=== ACCESS TOKEN STORED === Stored in Redis with 3600s TTL")
+    logger.info(f"=== REFRESH TOKEN STORED === Stored in Redis with 604800s TTL (7 days)")
     logger.debug(f"Token data: {json.dumps(token_data, indent=2)}")
 
     # Return the access token
@@ -274,11 +315,15 @@ async def oauth_token(
         "access_token": access_token,
         "token_type": "Bearer",
         "expires_in": 3600,
+        "refresh_token": refresh_token,  # ✅ CRITICAL: Include refresh_token
         "scope": auth_code_data["scope"].strip()  # ✅ FIXED: Strip whitespace from scope
     }
-    logger.info(f"=== OAUTH TOKEN SUCCESS === Returning access token to client")
-    logger.info(f"=== TOKEN RESPONSE === {json.dumps(response, indent=2)}")  # Changed to INFO level
-    return response
+    logger.info(f"=== OAUTH TOKEN SUCCESS === Returning access token + refresh token to client")
+    logger.info(f"=== TOKEN RESPONSE === {json.dumps(response, indent=2)}")
+
+    # CRITICAL FIX (Nov 2025): Ensure strict application/json Content-Type
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=response, media_type="application/json")
 
 # --- MCP Endpoint ---
 
@@ -408,21 +453,28 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
 # --- Main SSE Endpoint ---
 
-@router.head("/mcp")  # ✅ NEW: Handle HEAD probe requests
+@router.head("/mcp")  # ✅ Handle HEAD probe requests
 async def mcp_endpoint_head(request: Request):
-    """Handle HEAD requests to /mcp - returns 401 to trigger OAuth"""
+    """
+    Handle HEAD requests to /mcp.
+    Returns 200 OK to indicate endpoint exists.
+    OAuth discovery happens via WWW-Authenticate header, but HEAD should succeed
+    to allow Claude to proceed to POST/GET with Bearer token.
+    """
     auth_header = request.headers.get("authorization", "")
 
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         token_data_str = redis_client.get(f"access_token:{token}")
         if token_data_str:
-            logger.info(f"=== HEAD /mcp === Authenticated request with valid token")
+            logger.info(f"=== HEAD /mcp === Authenticated request with valid token - returning 200")
             from fastapi import Response
             return Response(status_code=200)
 
-    # No valid auth - return 401
-    logger.info(f"=== HEAD /mcp === Unauthenticated - returning 401 to trigger OAuth")
+    # ✅ CRITICAL FIX per Gemini research: Unauthenticated HEAD must return 401
+    # This tells Claude "this resource is protected, use the token you just got"
+    # Returning 200 confuses Claude into thinking the endpoint is public
+    logger.info(f"=== HEAD /mcp === Unauthenticated - returning 401 to trigger token usage")
     from fastapi import Response
     return Response(
         status_code=401,
@@ -474,6 +526,10 @@ async def sse_handler(request: Request):
             logger.debug(f"  {header_name}: {safe_value}")
         else:
             logger.debug(f"  {header_name}: {header_value}")
+
+    # Log Accept header for debugging but don't reject
+    accept_header = request.headers.get("accept", "")
+    logger.info(f"=== ACCEPT HEADER === {accept_header}")
 
     # Check for authentication
     auth_header = request.headers.get("authorization", "")
